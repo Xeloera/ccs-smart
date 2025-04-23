@@ -3,6 +3,8 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from sklearn import linear_model as sklm 
+from sklearn import preprocessing as skpp
+from sklearn import gaussian_process as skgp
 
 '''
 Solvent addition algorithm test environment for CCS Living Lab Project
@@ -103,7 +105,7 @@ def ia_dummy(initial_mass, vol_added, solubility, rsd):
         measured_percent_dissolution = np.random.normal(percent_dissolution, percent_dissolution*rsd)
     return False, measured_percent_dissolution
 
-def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5, initial_mass = 500, rsd = 0.1, init_steps = 5, n_reps = 3, alg_kwargs = [{}]):
+def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5, initial_mass = 150, rsd = 0.1, init_steps = 5, n_reps = 5, alg_kwargs = [{}]):
     '''
     Function to test the algorithms in the sol_addition.py file
     Args:
@@ -125,7 +127,7 @@ def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5,
     # Create a list to store the results for each algorithm
     res = []
     # Create a list to store the performance of each algorithm
-    perf = []
+    perf = [{'description': f'Performance of algorithms for {n_reps} repetitions:'}]
     # Loop through each algorithm and run it
     for i in range(len(algs)):
         # Create a list to store the results for this algorithm
@@ -143,28 +145,26 @@ def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5,
                 # Note there is an error of +/- 2 uL in the volume added
                 vol_added += 10 + np.random.normal(0, 2)
                 # Check dissolution status using the dummy function
-                completely_dissolved, percent_dissolution = ia_dummy(initial_mass, vol_added, solubility, rsd)
+                completely_diss, percent_diss = ia_dummy(initial_mass, vol_added, solubility, rsd)
                 # Append the results to the algorithm results list
-                run_res[0].append(vol_added), run_res[1].append(percent_dissolution)
+                run_res[0].append(vol_added), run_res[1].append(percent_diss)
             # Now run the algorithm
             # Loop until the system is fully dissolved
-            while not completely_dissolved:
+            while not completely_diss:
                 # Get volume to add from the algorithm
-                vol_to_add = algs[i](run_res[0], run_res[1], kwargs = alg_kwargs[i])
+                vol_to_add = algs[i](run_res[0], run_res[1], **alg_kwargs[i])
                 # Add the volume to the system
                 # Note there is an error of +/- 2 uL in the volume added
                 vol_added += vol_to_add + np.random.normal(0, 2)
                 # Check dissolution status using the dummy function
-                completely_dissolved, percent_dissolution = ia_dummy(initial_mass, vol_added, solubility, rsd)
+                completely_diss, percent_diss = ia_dummy(initial_mass, vol_added, solubility, rsd)
                 # Append the results to the algorithm results list
-                run_res[0].append(vol_added), run_res[1].append(percent_dissolution)
+                run_res[0].append(vol_added), run_res[1].append(percent_diss)
             # Append the results for this run to the algorithm results list
             alg_res.append(run_res)
         # Append the results for this algorithm to the overall results list
         res.append(alg_res)
         # Calculate the performance of the algorithm
-        # Calculate the mean number of steps taken to reach 100% dissolution
-        mean_num_steps = np.mean([len(run[0]) for run in alg_res])
         # Calculate the mean measured solubility
         mean_measured_solubility = np.mean([initial_mass/run[0][-1] for run in alg_res])
         # Calculate the mean error
@@ -173,7 +173,7 @@ def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5,
         mean_overshoot = np.mean([run[0][-1] - initial_mass/solubility for run in alg_res])
         perf.append({
             'algorithm': algs[i].__name__,
-            'mean_num_steps_after_init': f"{mean_num_steps - init_steps:.3f}",
+            'mean_num_steps': f"{np.mean([len(run[0]) for run in alg_res]):.2f}",
             'mean_measured_solubility': f"{mean_measured_solubility:.3f} mg/uL",
             'real_solubility': f"{solubility:.3f} mg/uL",
             'mean_error': f"{mean_error:.3%}",
@@ -192,14 +192,23 @@ def OLS_fixed_steps(X, Y, **kwargs):
     Returns:
         vol_to_add (float): volume to add to the system (in uL)
     '''
-    # Get the fixed step size from the kwargs
+    # Get the fixed step size from the kwargs (default to 10%)
+    # This is the step size in % dissolution, not volume added
     step_size = kwargs.get('step_size', 0.1)
     # Calculate the volume to add using OLS regression
-    reg = sklm.LinearRegression()
+    reg = sklm.LinearRegression(fit_intercept=False)
     # Fit the regression model to the data
     reg.fit(np.array(X).reshape(-1, 1), Y)
-    # Use regression model to predict volume to add to incriment the % dissolution by the step size
-    vol_to_add = (step_size)/reg.coef_[0] # We know intercept is 0, so we can ignore it
+    # Estimate volume required to clear point
+    clr_pnt = 1/reg.coef_[0]
+    # Estimate current % dissolution
+    current_diss = reg.coef_[0] * X[-1]
+    # If a step would take the system over the clear point, add volume to reach the clear point
+    if current_diss + step_size > 1:
+        vol_to_add = clr_pnt - X[-1]
+    # Otherwise, add volume to reach the next step size
+    else:
+        vol_to_add = (step_size) / reg.coef_[0]
     return vol_to_add
 
 def TheilSen_fixed_steps(X, Y, **kwargs):
@@ -213,30 +222,83 @@ def TheilSen_fixed_steps(X, Y, **kwargs):
     Returns:
         vol_to_add (float): volume to add to the system (in uL)
     '''
-    # Get the fixed step size from the kwargs
+    # Get the fixed step size from the kwargs, default to 10%
+    # This is the step size in % dissolution, not volume added
     step_size = kwargs.get('step_size', 0.1)
     # Calculate the volume to add using Theil-Sen regression
-    reg = sklm.TheilSenRegressor()
+    reg = sklm.TheilSenRegressor(fit_intercept=False)
     # Fit the regression model to the data
     reg.fit(np.array(X).reshape(-1, 1), Y)
-    # Use regression model to predict volume to add to incriment the % dissolution by the step size
-    vol_to_add = (step_size)/reg.coef_[0] # We know intercept is 0, so we can ignore it
+    # Estimate volume required to clear point
+    clr_pnt = 1/reg.coef_[0]
+    # Estimate current % dissolution
+    current_diss = reg.coef_[0] * X[-1]
+    # If a step would take the system over the clear point, add volume to reach the clear point
+    if current_diss + step_size > 1:
+        vol_to_add = clr_pnt - X[-1]
+    # Otherwise, add volume to reach the next step size
+    else:
+        vol_to_add = (step_size) / reg.coef_[0]
     return vol_to_add
 
-# test the OLS_fixed_steps algorithm
+def BR_fixed_steps(X, Y, **kwargs):
+    '''
+    Function to implement the Bayesian Ridge regression algorithm with fixed steps
+    Args:
+        X (list): list of X values (volumes added (in uL) at each % dissolution)
+        Y (list): list of Y values (percent dissolutions at each volume added)
+        **kwargs (dict): dictionary of keyword arguments for the algorithm
+              step_size (int): desired % dissolution step size (default = 10%)
+    Returns:
+        vol_to_add (float): volume to add to the system (in uL)
+    '''
+    # Get the fixed step size from the kwargs, default to 10%
+    # This is the step size in % dissolution, not volume added
+    step_size = kwargs.get('step_size', 0.1)
+    # Calculate the volume to add using Bayesian Ridge regression
+    reg = sklm.BayesianRidge(fit_intercept=False)
+    # Fit the regression model to the data
+    reg.fit(np.array(X).reshape(-1, 1), Y)
+    # Estimate volume required to clear point
+    clr_pnt = 1/reg.coef_[0]
+    # Estimate current % dissolution
+    current_diss = reg.coef_[0] * X[-1]
+    # If a step would take the system over the clear point, add volume to reach the clear point
+    if current_diss + step_size > 1:
+        vol_to_add = clr_pnt - X[-1]
+    # Otherwise, add volume to reach the next step size
+    else:
+        vol_to_add = (step_size) / reg.coef_[0]
+    return vol_to_add
+
+def linear_GP_fixed_steps(X, Y, **kwargs):
+    '''
+    Function to implement a linear Gaussian Process regression algorithm, with a fixed step size
+    Args:
+        X (list): list of X values (volumes added (in uL) at each % dissolution)
+        Y (list): list of Y values (percent dissolutions at each volume added)
+        **kwargs (dict): dictionary of keyword arguments for the algorithm
+            step_size (int): desired % dissolution step size (default = 10%)
+    Returns:
+        vol_to_add (float): volume to add to the system (in uL)
+    '''
+    raise NotImplementedError("The linear_GP_fixed_steps function is not yet implemented.")
+
+
+# test the algorithms
 if __name__ == '__main__':
     # Set up the parameters for the test
     API = 'Ibuprofen'
     s1 = 'EtOH'
     s2 = 'IPA'
     sol_ratio = 0.5
-    initial_mass = 500
-    rsd = 0.1
-    init_steps = 5
-    n_reps = 3
-    algs = [OLS_fixed_steps, TheilSen_fixed_steps] 
-    alg_kwargs = [[{'step_size': 0.1}], [{'step_size': 0.1}]] # List of dictionaries of keyword arguments for each algorithm
+    initial_mass = 150
+    rsd = 0.2
+    init_steps = 3
+    n_reps = 1000
+    algs = [OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps] # List of algorithms to test
+    alg_kwargs = [{'step_size': 0.2}, {'step_size': 0.2}, {'step_size': 0.2}] # List of dictionaries of keyword arguments for each algorithm
     # Run the test
     res, perf = test_algs(algs=algs, API=API, s1=s1, s2=s2, sol_ratio=sol_ratio, initial_mass=initial_mass, rsd=rsd, init_steps=init_steps, n_reps=n_reps, alg_kwargs=alg_kwargs)
-    # Print the results and performance
+    # Print the performance
     print(perf)
