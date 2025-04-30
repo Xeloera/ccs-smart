@@ -321,7 +321,7 @@ def test_algorithms(algs, alg_kwargs = [{}]):
                 # Get the solvent ratio from the sample
                 sol_ratio = sample[i][0]
                 # Run the algorithms for 5 repetitions
-                res, perf = run_algs_n_reps(algs, API, s1=solvent_pair[0], s2=solvent_pair[1], sol_ratio=sol_ratio, initial_mass=150, rsd=0.1, init_steps=5, n_reps = 10, alg_kwargs = alg_kwargs)
+                res, perf_list = run_algs_n_reps(algs, API, s1=solvent_pair[0], s2=solvent_pair[1], sol_ratio=sol_ratio, initial_mass=150, rsd=0.1, init_steps=5, n_reps = 10, alg_kwargs = alg_kwargs)
             # Append the results to the performance dataframe
                 for i in range(len(algs)):
                     # Get the performance metrics for this algorithm
