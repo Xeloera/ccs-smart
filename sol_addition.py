@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 from sklearn import linear_model as sklm 
 from sklearn import preprocessing as skpp
 from sklearn import gaussian_process as skgp
+from itertools import combinations
+import time
 
 '''
 Solvent addition algorithm test environment for CCS Living Lab Project
@@ -105,9 +107,10 @@ def ia_dummy(initial_mass, vol_added, solubility, rsd):
         measured_percent_dissolution = np.random.normal(percent_dissolution, percent_dissolution*rsd)
     return False, measured_percent_dissolution
 
-def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5, initial_mass = 150, rsd = 0.1, init_steps = 5, n_reps = 5, alg_kwargs = [{}]):
+def run_algs_n_reps(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5, initial_mass = 150, rsd = 0.1, init_steps = 5, n_reps = 5, min_volume = 10, alg_kwargs = [{}]):
     '''
-    Function to test the algorithms in the sol_addition.py file
+    Function to check the algorithms' peformance in the sol_addition.py file on a particular API and solvent system
+    This function runs the algorithms for a number of repetitions and returns the mean results for each algorithm
     Args:
         algs (list): list of algorithms to test
         API (str): API selected for the run (valid values: 'Ibuprofen', 'Mefenamic Acid', 'Paracetamol')
@@ -118,24 +121,27 @@ def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5,
         rsd (float): user defined relative standard deviation of the i.a. software
         init_steps (str): number of initial (minimum volume) steps to take before switching to the algorithm
         n_reps (int): number of repetitions to run the test for each algorithm
+        min_volume (int): minimum volume to add at each step (in uL)
         alg_kwargs (list): list of dictionaries of keyword arguments to pass to the algorithms
     Returns:
         results (list): list of lists of results for each algorithm at each iteration
+        perf (dict) : dicts containing performance metrics for each algorithm
     '''
     # Get solubility from gProms data
     solubility = read_gProms_data(API, s1, s2, sol_ratio)
     # Create a list to store the results for each algorithm
     res = []
-    # Create a list to store the performance of each algorithm
-    perf = [{'description': f'Performance of algorithms for {n_reps} repetitions:'}]
+    # Create a dict to store the performance of each algorithm
+    perf = {'API': API, 's1': s1, 's2': s2, 'sol_ratio': sol_ratio}
     # Loop through each algorithm and run it
     for i in range(len(algs)):
         # Create a list to store the results for this algorithm
         alg_res = []
         # Repeat the test for the number of repetitions specified
         for _ in range(n_reps):
-            # Set the initial volume added to 0
-            vol_added = 0
+            # Set the initial volume added (both measured and actual) to 0
+            measured_vol_added = 0 
+            actual_vol_added = 0
             # Set the completely_dissolved flag to False
             completely_dissolved = False
             # Set up array for X and Y values, with (0, 0) as the first point
@@ -143,11 +149,14 @@ def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5,
             for step in range(init_steps):
                 # Add the minimum volume of solvent (10 uL) to the system
                 # Note there is an error of +/- 2 uL in the volume added
-                vol_added += 10 + np.random.normal(0, 2)
+                # Track what has been measured to be added (fed to algorithm) and what has actually been added (fed to image analysis dummy) separately 
+                measured_vol_added += min_volume
+                actual_vol_added += min_volume + np.random.normal(0,2)
                 # Check dissolution status using the dummy function
-                completely_diss, percent_diss = ia_dummy(initial_mass, vol_added, solubility, rsd)
+                completely_diss, percent_diss = ia_dummy(initial_mass, actual_vol_added, solubility, rsd)
                 # Append the results to the algorithm results list
-                run_res[0].append(vol_added), run_res[1].append(percent_diss)
+                # Assume actual amount added is not known, so take it as 10uL (ignoring error)
+                run_res[0].append(measured_vol_added), run_res[1].append(percent_diss)
             # Now run the algorithm
             # Loop until the system is fully dissolved
             while not completely_diss:
@@ -155,11 +164,13 @@ def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5,
                 vol_to_add = algs[i](run_res[0], run_res[1], **alg_kwargs[i])
                 # Add the volume to the system
                 # Note there is an error of +/- 2 uL in the volume added
-                vol_added += vol_to_add + np.random.normal(0, 2)
+                # Track what has been measured to be added (fed to algorithm) and what has actually been added (fed to image analysis dummy) separately
+                measured_vol_added += vol_to_add
+                actual_vol_added += vol_to_add + np.random.normal(0,2)
                 # Check dissolution status using the dummy function
-                completely_diss, percent_diss = ia_dummy(initial_mass, vol_added, solubility, rsd)
+                completely_diss, percent_diss = ia_dummy(initial_mass, actual_vol_added, solubility, rsd)
                 # Append the results to the algorithm results list
-                run_res[0].append(vol_added), run_res[1].append(percent_diss)
+                run_res[0].append(measured_vol_added), run_res[1].append(percent_diss)
             # Append the results for this run to the algorithm results list
             alg_res.append(run_res)
         # Append the results for this algorithm to the overall results list
@@ -171,13 +182,13 @@ def test_algs(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5,
         mean_error = (mean_measured_solubility - solubility)/solubility 
         # Calculate the mean volume overshoot
         mean_overshoot = np.mean([run[0][-1] - initial_mass/solubility for run in alg_res])
-        perf.append({
+        perf.update({
             'algorithm': algs[i].__name__,
-            'mean_num_steps': f"{np.mean([len(run[0]) for run in alg_res]):.2f}",
-            'mean_measured_solubility': f"{mean_measured_solubility:.3f} mg/uL",
-            'real_solubility': f"{solubility:.3f} mg/uL",
-            'mean_error': f"{mean_error:.3%}",
-            'mean_volume_overshoot': f"{mean_overshoot:.3f} uL",
+            'mean_num_steps': np.mean([len(run[0]) for run in alg_res]),
+            'mean_measured_solubility': mean_measured_solubility,
+            'real_solubility': solubility,
+            'mean_error': mean_error,
+            'mean_volume_overshoot': mean_overshoot,
         })
     return res, perf
 
@@ -271,34 +282,42 @@ def BR_fixed_steps(X, Y, **kwargs):
         vol_to_add = (step_size) / reg.coef_[0]
     return vol_to_add
 
-def linear_GP_fixed_steps(X, Y, **kwargs):
+# Test the algorithms on pure systems, as well as for a random sample of solvent ratios for each API and solvent system combination
+def test_algorithms(algs, alg_kwargs = [{}]): 
     '''
-    Function to implement a linear Gaussian Process regression algorithm, with a fixed step size
+    Function to test the algorithms in the sol_addition.py file
     Args:
-        X (list): list of X values (volumes added (in uL) at each % dissolution)
-        Y (list): list of Y values (percent dissolutions at each volume added)
-        **kwargs (dict): dictionary of keyword arguments for the algorithm
-            step_size (int): desired % dissolution step size (default = 10%)
+        algs (list): list of algorithms to test
     Returns:
-        vol_to_add (float): volume to add to the system (in uL)
+        perf_df (df): dataframe of performance metrics for each algorithm
     '''
-    raise NotImplementedError("The linear_GP_fixed_steps function is not yet implemented.")
+    APIs = ['Ibuprofen', 'Mefenamic Acid', 'Paracetamol']
+    solvents = ['H2O', 'EtOH', 'IPA']
+    perf_df = pd.DataFrame()
+    # Test the algorithms on pure systems first (do 5 reps for each algorithm)
+    for API in APIs:
+        for solvent in solvents:
+            # Run the algorithms for 5 repetitions
+            if solvent != 'IPA':
+                res, perf = run_algs_n_reps(algs, API, s1 = solvent, s2 = 'IPA', sol_ratio = 1, initial_mass = 1000, rsd = 0.1, init_steps = 5, n_reps = 10, alg_kwargs = alg_kwargs)
+            else:
+                res, perf = run_algs_n_reps(algs, API, s1 = 'IPA', s2 = 'EtOH', sol_ratio = 1, initial_mass = 1000, rsd = 0.1, init_steps = 5, n_reps = 10, alg_kwargs = alg_kwargs)
+            # Append the results to the performance dataframe
+            perf_df = pd.concat((perf_df, pd.DataFrame(perf, index = [0])))
+    # Now test the algorithms on a sample of solvent ratios for each API and solvent system combination
+    for API in APIs:
+        for solvent_pair in combinations(solvents, 2):
+            # Generate a uniform sample of 10 solvent ratios between 0 and 1
+            sample = np.random.uniform(0.01, 0.99, size=(10, 1)) # Have already ran pures, so exclude 0 and 1
+            # Loop through each sample and run the algorithms
+            for i in range(len(sample)):
+                # Get the solvent ratio from the sample
+                sol_ratio = sample[i][0]
+                # Run the algorithms for 5 repetitions
+                res, perf = run_algs_n_reps(algs, API, s1=solvent_pair[0], s2=solvent_pair[1], sol_ratio=sol_ratio, initial_mass=150, rsd=0.1, init_steps=5, n_reps = 10, alg_kwargs = alg_kwargs)
+                # Append the results to the performance dataframe
+                perf_df = pd.concat((perf_df, pd.DataFrame(perf, index=[0])))
+    return perf_df
 
-
-# test the algorithms
-if __name__ == '__main__':
-    # Set up the parameters for the test
-    API = 'Ibuprofen'
-    s1 = 'EtOH'
-    s2 = 'IPA'
-    sol_ratio = 0.5
-    initial_mass = 150
-    rsd = 0.2
-    init_steps = 3
-    n_reps = 1000
-    algs = [OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps] # List of algorithms to test
-    alg_kwargs = [{'step_size': 0.2}, {'step_size': 0.2}, {'step_size': 0.2}] # List of dictionaries of keyword arguments for each algorithm
-    # Run the test
-    res, perf = test_algs(algs=algs, API=API, s1=s1, s2=s2, sol_ratio=sol_ratio, initial_mass=initial_mass, rsd=rsd, init_steps=init_steps, n_reps=n_reps, alg_kwargs=alg_kwargs)
-    # Print the performance
-    print(perf)
+df = test_algorithms([OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps], alg_kwargs=[{'step_size': 0.1}, {'step_size': 0.1}, {'step_size': 0.1}])
+df.to_excel(f'alg_performance_{time.strftime("%Y%m%d_%H%M%S")}.xlsx', index = False)
