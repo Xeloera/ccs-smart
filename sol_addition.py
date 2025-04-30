@@ -125,7 +125,7 @@ def run_algs_n_reps(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio 
         alg_kwargs (list): list of dictionaries of keyword arguments to pass to the algorithms
     Returns:
         results (list): list of lists of results for each algorithm at each iteration
-        perf (dict) : dicts containing performance metrics for each algorithm
+        perf_list (list) : list of dicts containing performance metrics for each algorithm
     '''
     # Get solubility from gProms data
     solubility = read_gProms_data(API, s1, s2, sol_ratio)
@@ -133,6 +133,8 @@ def run_algs_n_reps(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio 
     res = []
     # Create a dict to store the performance of each algorithm
     perf = {'API': API, 's1': s1, 's2': s2, 'sol_ratio': sol_ratio}
+    # Create a list to store the performance metrics for each algorithm
+    perf_list = []
     # Loop through each algorithm and run it
     for i in range(len(algs)):
         # Create a list to store the results for this algorithm
@@ -190,7 +192,8 @@ def run_algs_n_reps(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio 
             'mean_error': mean_error,
             'mean_volume_overshoot': mean_overshoot,
         })
-    return res, perf
+        perf_list.append(perf.copy())
+    return res, perf_list
 
 def OLS_fixed_steps(X, Y, **kwargs):
     '''
@@ -299,11 +302,15 @@ def test_algorithms(algs, alg_kwargs = [{}]):
         for solvent in solvents:
             # Run the algorithms for 5 repetitions
             if solvent != 'IPA':
-                res, perf = run_algs_n_reps(algs, API, s1 = solvent, s2 = 'IPA', sol_ratio = 1, initial_mass = 1000, rsd = 0.1, init_steps = 5, n_reps = 10, alg_kwargs = alg_kwargs)
+                res, perf_list = run_algs_n_reps(algs, API, s1 = solvent, s2 = 'IPA', sol_ratio = 1, initial_mass = 1000, rsd = 0.1, init_steps = 5, n_reps = 10, alg_kwargs = alg_kwargs)
             else:
-                res, perf = run_algs_n_reps(algs, API, s1 = 'IPA', s2 = 'EtOH', sol_ratio = 1, initial_mass = 1000, rsd = 0.1, init_steps = 5, n_reps = 10, alg_kwargs = alg_kwargs)
+                res, perf_list = run_algs_n_reps(algs, API, s1 = 'IPA', s2 = 'EtOH', sol_ratio = 1, initial_mass = 1000, rsd = 0.1, init_steps = 5, n_reps = 10, alg_kwargs = alg_kwargs)
             # Append the results to the performance dataframe
-            perf_df = pd.concat((perf_df, pd.DataFrame(perf, index = [0])))
+            for i in range(len(algs)):
+                # Get the performance metrics for this algorithm
+                perf = perf_list[i]
+                # Append the performance metrics to the dataframe
+                perf_df = pd.concat((perf_df, pd.DataFrame(perf, index = [0])))
     # Now test the algorithms on a sample of solvent ratios for each API and solvent system combination
     for API in APIs:
         for solvent_pair in combinations(solvents, 2):
@@ -315,8 +322,12 @@ def test_algorithms(algs, alg_kwargs = [{}]):
                 sol_ratio = sample[i][0]
                 # Run the algorithms for 5 repetitions
                 res, perf = run_algs_n_reps(algs, API, s1=solvent_pair[0], s2=solvent_pair[1], sol_ratio=sol_ratio, initial_mass=150, rsd=0.1, init_steps=5, n_reps = 10, alg_kwargs = alg_kwargs)
-                # Append the results to the performance dataframe
-                perf_df = pd.concat((perf_df, pd.DataFrame(perf, index=[0])))
+            # Append the results to the performance dataframe
+                for i in range(len(algs)):
+                    # Get the performance metrics for this algorithm
+                    perf = perf_list[i]
+                    # Append the performance metrics to the dataframe
+                    perf_df = pd.concat((perf_df, pd.DataFrame(perf, index = [0])))
     return perf_df
 
 df = test_algorithms([OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps], alg_kwargs=[{'step_size': 0.1}, {'step_size': 0.1}, {'step_size': 0.1}])
