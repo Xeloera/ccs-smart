@@ -182,15 +182,15 @@ def run_algs_n_reps(algs, API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio 
         mean_measured_solubility = np.mean([initial_mass/run[0][-1] for run in alg_res])
         # Calculate the mean error
         mean_error = (mean_measured_solubility - solubility)/solubility 
-        # Calculate the mean volume overshoot
-        mean_overshoot = np.mean([run[0][-1] - initial_mass/solubility for run in alg_res])
+        # Calculate the mean volume added
+        mean_vol_added = np.mean([run[0][-1] for run in alg_res])
         perf.update({
             'algorithm': algs[i].__name__,
             'mean_num_steps': np.mean([len(run[0]) for run in alg_res]),
             'mean_measured_solubility': mean_measured_solubility,
             'real_solubility': solubility,
             'mean_error': mean_error,
-            'mean_volume_overshoot': mean_overshoot,
+            'mean_volume_added': mean_vol_added,
         })
         perf_list.append(perf.copy())
     return res, perf_list
