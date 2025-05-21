@@ -315,7 +315,7 @@ def test_algorithms(algs, alg_kwargs = [{}]):
     for API in APIs:
         for solvent_pair in combinations(solvents, 2):
             # Generate a uniform sample of 10 solvent ratios between 0 and 1
-            sample = np.random.uniform(0.01, 0.99, size=(10, 1)) # Have already ran pures, so exclude 0 and 1
+            sample = np.random.uniform(0.01, 0.99, size=(20, 1)) # Have already ran pures, so exclude 0 and 1
             # Loop through each sample and run the algorithms
             for i in range(len(sample)):
                 # Get the solvent ratio from the sample
@@ -330,5 +330,57 @@ def test_algorithms(algs, alg_kwargs = [{}]):
                     perf_df = pd.concat((perf_df, pd.DataFrame(perf, index = [0])))
     return perf_df
 
+def plot_run(algs, API, s1, s2, sol_ratio, initial_mass, rsd, init_steps, min_volume, alg_kwargs):
+    ''' 
+    Function to plot a one run of each algorithm
+    Args:
+        algs (function): algorithms to plot
+        API (str): API selected for the run (valid values: 'Ibuprofen', 'Mefenamic Acid', 'Paracetamol')
+        s1 (str) : solvent 1 selected for the run
+        s2 (str) : solvent 2 selected for the run (valid values: 'H2O', 'EtOH', 'IPA')
+        sol_ratio (float): solvent ratio selected for the run (this is the ratio of x_s1/(x_s1+x_s2))
+        initial_mass (float): mass added (in mg) initially
+        rsd (float): user defined relative standard deviation of the i.a. software
+        init_steps (str): number of initial (minimum volume) steps to take before switching to the algorithm
+        min_volume (int): minimum volume to add at each step (in uL)
+        alg_kwargs (list): list of dictionaries of keyword arguments to pass to the algorithms
+    Returns:
+        None
+    '''
+    # Run the algorithm for one repetition
+    res, perf_list = run_algs_n_reps(algs, API, s1, s2, sol_ratio, initial_mass, rsd, init_steps, 1, min_volume, alg_kwargs)
+    # Get gProms solubility to compare
+    solubility = read_gProms_data(API, s1, s2, sol_ratio)
+    # Create a linear line using the gProms solubility for comparison
+    # Continue beyond the clear point to see how the algorithms behave
+    x_gproms = np.linspace(0, 1.5*(initial_mass/solubility), 100)
+    y_gproms = solubility/initial_mass * x_gproms
+    # Create a figure to plot the results#
+    fig, ax = plt.subplots()
+    # Plot the results for each algorithm
+    for i in range(len(algs)):
+        # Pull all the results for this algorithm
+        alg_res = res[i]
+        # Get the volume added and percent dissolution at each step
+        vol = np.array([run[0] for run in alg_res]).flatten()
+        diss = np.array([run[1] for run in alg_res]).flatten()
+        # Plot the average vol and diss for this algorithm
+        ax.plot(vol, diss, label=algs[i].__name__)
+    # Plot the gProms solubility line
+    ax.plot(x_gproms, y_gproms, label='gProms solubility', linestyle='--', color='black')
+    # Add labels and title
+    ax.set_xlabel('Volume added (uL)')
+    ax.set_ylabel('Percent dissolution')
+    ax.set_title(f'{API} in {s1}/{s2} at {sol_ratio} solvent ratio')
+    # Limit x axis to longest run
+    ax.set_xlim(0, np.max([run[0][-1] for run in alg_res for alg_res in res]))
+    # Add a legend
+    ax.legend()
+    # Show the plot
+    plt.show()
+    return None
+
 df = test_algorithms([OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps], alg_kwargs=[{'step_size': 0.1}, {'step_size': 0.1}, {'step_size': 0.1}])
 df.to_excel(f'alg_performance_{time.strftime("%Y%m%d_%H%M%S")}.xlsx', index = False)
+
+#plot_run(algs = [OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps], API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5, initial_mass = 150, rsd = 0.1, init_steps = 5, min_volume = 10, alg_kwargs = [{'step_size': 0.1}, {'step_size': 0.1}, {'step_size': 0.1}])
