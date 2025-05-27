@@ -380,7 +380,46 @@ def plot_run(algs, API, s1, s2, sol_ratio, initial_mass, rsd, init_steps, min_vo
     plt.show()
     return None
 
-df = test_algorithms([OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps], alg_kwargs=[{'step_size': 0.1}, {'step_size': 0.1}, {'step_size': 0.1}])
-df.to_excel(f'alg_performance_{time.strftime("%Y%m%d_%H%M%S")}.xlsx', index = False)
+def collate_performance_metrics(excel_file):
+    """
+    Reads the generated Excel spreadsheet and collates performance metrics for each API and overall for each algorithm.
 
+    Args:
+        excel_file (str): Path to the Excel file containing algorithm performance metrics.
+
+    Returns:
+        summary_df (pd.DataFrame): DataFrame summarizing mean metrics per API and overall for each algorithm.
+   """
+    df = pd.read_excel(excel_file)
+    # Ensure only expected APIs and algorithms are included
+    apis = ["Ibuprofen", "Paracetamol", "Mefenamic Acid"]
+    algs = ["OLS_fixed_steps", "BR_fixed_steps", "TheilSen_fixed_steps"]
+    df = df[df['API'].isin(apis) & df['algorithm'].isin(algs)]
+    # List of metrics to average
+    metrics = [
+        'mean_num_steps',
+        'mean_measured_solubility',
+        'real_solubility',
+        'mean_error',
+        'mean_volume_added'
+        ]
+    # Group by API and algorithm
+    api_summary = df.groupby(['API', 'algorithm'])[metrics].mean().reset_index()
+    api_summary['Type'] = 'Per API'
+    # Overall summary per algorithm
+    overall_summary = df.groupby(['algorithm'])[metrics].mean().reset_index()
+    overall_summary['API'] = 'All'
+    overall_summary['Type'] = 'Overall'
+    # Combine summaries
+    summary_df = pd.concat([api_summary, overall_summary], ignore_index=True)
+    # Optional: sort for readability
+    summary_df = summary_df.sort_values(['Type', 'API', 'algorithm']).reset_index(drop=True)
+    return summary_df
+
+#df = test_algorithms([OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps], alg_kwargs=[{'step_size': 0.1}, {'step_size': 0.1}, {'step_size': 0.1}])
+#df.to_excel(f'alg_performance_{time.strftime("%Y%m%d_%H%M%S")}.xlsx', index = False)
 #plot_run(algs = [OLS_fixed_steps, TheilSen_fixed_steps, BR_fixed_steps], API = 'Ibuprofen', s1 = 'EtOH', s2 = 'IPA', sol_ratio = 0.5, initial_mass = 150, rsd = 0.1, init_steps = 5, min_volume = 10, alg_kwargs = [{'step_size': 0.1}, {'step_size': 0.1}, {'step_size': 0.1}])
+balls = collate_performance_metrics('alg_performance_20250521_155235.xlsx')
+print(balls)
+#Save the collated performance metrics to an Excel file
+balls.to_excel('collated_performance_metrics.xlsx', index=False)
